@@ -36,6 +36,7 @@ pub struct Parser<'a> {
     pub cxx_name: Option<&'a mut Option<ForeignName>>,
     pub rust_name: Option<&'a mut Option<Ident>>,
     pub variants_from_header: Option<&'a mut Option<Attribute>>,
+    pub error_mapper: Option<&'a mut Option<Path>>,
     pub ignore_unrecognized: bool,
 
     // Suppress clippy needless_update lint ("struct update has no effect, all
@@ -164,6 +165,21 @@ pub fn parse(cx: &mut Errors, attrs: Vec<Attribute>, mut parser: Parser) -> Othe
             continue;
         } else if attr.path.is_ident("serde") {
             passthrough_attrs.push(attr);
+            continue;
+        } else if attr.path.is_ident("error_mapper") {
+            fn error_mapper_parser(input: ParseStream) -> Result<Path> {
+                input.parse::<Token![=]>()?;
+                let path = input.parse::<Path>()?;
+                Ok(path)
+            }
+            match error_mapper_parser.parse2(attr.tokens.clone()) {
+                Ok(path) => {
+                    if let Some(error_mapper) = &mut parser.error_mapper {
+                        **error_mapper = Some(path);
+                    }
+                }
+                Err(e) => cx.push(e),
+            }
             continue;
         } else if attr.path.segments.len() > 1 {
             let tool = &attr.path.segments.first().unwrap().ident;

@@ -139,11 +139,13 @@ pub(super) fn generate(syntax: File, opt: &Opt) -> Result<GeneratedCode> {
     let ref mut cfg_errors = Set::new();
     for bridge in syntax.modules {
         let mut cfg = CfgExpr::Unconditional;
+        let mut error_mapper = None;
         attrs::parse(
             errors,
             bridge.attrs,
             attrs::Parser {
                 cfg: Some(&mut cfg),
+                error_mapper: Some(&mut error_mapper),
                 ignore_unrecognized: true,
                 ..Default::default()
             },
@@ -156,6 +158,7 @@ pub(super) fn generate(syntax: File, opt: &Opt) -> Result<GeneratedCode> {
                 bridge.content,
                 trusted,
                 namespace,
+                error_mapper.as_ref(),
             ));
         }
     }

@@ -264,6 +264,7 @@ impl ToTokens for Signature {
             throws: _,
             paren_token,
             throws_tokens,
+            error_mapper: _,
         } = self;
         fn_token.to_tokens(tokens);
         paren_token.surround(tokens, |tokens| {

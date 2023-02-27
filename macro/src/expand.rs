@@ -15,19 +15,21 @@ use crate::{derive, generics};
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned, ToTokens};
 use std::mem;
-use syn::{parse_quote, punctuated, Generics, Lifetime, Result, Token};
+use syn::{parse_quote, punctuated, Generics, Lifetime, Path, Result, Token};
 
 pub fn bridge(mut ffi: Module) -> Result<TokenStream> {
     let ref mut errors = Errors::new();
 
     let mut cfg = CfgExpr::Unconditional;
     let mut doc = Doc::new();
+    let mut error_mapper = None;
     let attrs = attrs::parse(
         errors,
         mem::take(&mut ffi.attrs),
         attrs::Parser {
             cfg: Some(&mut cfg),
             doc: Some(&mut doc),
+            error_mapper: Some(&mut error_mapper),
             ..Default::default()
         },
     );
@@ -35,7 +37,8 @@ pub fn bridge(mut ffi: Module) -> Result<TokenStream> {
     let content = mem::take(&mut ffi.content);
     let trusted = ffi.unsafety.is_some();
     let namespace = &ffi.namespace;
-    let ref mut apis = syntax::parse_items(errors, content, trusted, namespace);
+    let ref mut apis =
+        syntax::parse_items(errors, content, trusted, namespace, error_mapper.as_ref());
     #[cfg(feature = "experimental-enum-variants-from-header")]
     crate::load::load(errors, apis);
     let ref types = Types::collect(errors, apis);
@@ -797,6 +800,7 @@ fn expand_function_pointer_trampoline(
         None,
         Some(&efn.generics),
         &efn.attrs,
+        efn.error_mapper.as_ref(),
         body_span,
     );
     let var = &var.rust;
@@ -948,6 +952,7 @@ fn expand_rust_function_shim(efn: &ExternFn, types: &Types) -> TokenStream {
         invoke,
         None,
         &efn.attrs,
+        efn.error_mapper.as_ref(),
         body_span,
     )
 }
@@ -961,6 +966,7 @@ fn expand_rust_function_shim_impl(
     invoke: Option<&Ident>,
     outer_generics: Option<&Generics>,
     attrs: &OtherAttrs,
+    error_mapper: Option<&Path>,
     body_span: Span,
 ) -> TokenStream {
     let generics = outer_generics.unwrap_or(&sig.generics);
@@ -1032,7 +1038,8 @@ fn expand_rust_function_shim_impl(
     });
     let vars: Vec<_> = receiver_var.into_iter().chain(arg_vars).collect();
 
-    let wrap_super = invoke.map(|invoke| expand_rust_function_shim_super(sig, &local_name, invoke));
+    let wrap_super = invoke
+        .map(|invoke| expand_rust_function_shim_super(sig, &local_name, invoke, error_mapper));
 
     let mut requires_closure;
     let mut call = match invoke {
@@ -1152,6 +1159,7 @@ fn expand_rust_function_shim_super(
     sig: &Signature,
     local_name: &Ident,
     invoke: &Ident,
+    error_mapper: Option<&Path>,
 ) -> TokenStream {
     let unsafety = sig.unsafety;
     let generics = &sig.generics;
@@ -1193,10 +1201,12 @@ fn expand_rust_function_shim_super(
         // Set spans that result in the `Result<...>` written by the user being
         // highlighted as the cause if their error type is not convertible to
         // CxxException (i.e., no `Display` trait by default).
-        let result_begin = quote_spanned!{ result.span=>
-            |e| ::cxx::map_rust_error_to_cxx_exception!
+        let mapper = match error_mapper {
+            Some(path) => quote!(#path),
+            None => quote!(::cxx::map_rust_error_to_cxx_exception),
         };
-        let result_end = quote_spanned!{ rangle.span=> (e) };
+        let result_begin = quote_spanned! { result.span=> |e| #mapper! };
+        let result_end = quote_spanned! { rangle.span=> (e) };
         quote_spanned! {span=>
             #call(#(#vars,)*).map_err( #result_begin #result_end )
         }

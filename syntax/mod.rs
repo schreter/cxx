@@ -38,7 +38,7 @@ use self::symbol::Symbol;
 use proc_macro2::{Ident, Span};
 use syn::punctuated::Punctuated;
 use syn::token::{Brace, Bracket, Paren};
-use syn::{Attribute, Expr, Generics, Lifetime, LitInt, Token, Type as RustType};
+use syn::{Attribute, Expr, Generics, Lifetime, LitInt, Path, Token, Type as RustType};
 
 pub use self::atom::Atom;
 pub use self::derive::{Derive, Trait};
@@ -189,6 +189,7 @@ pub struct Signature {
     pub throws: bool,
     pub paren_token: Paren,
     pub throws_tokens: Option<(kw::Result, Token![<], Token![>])>,
+    pub error_mapper: Option<Path>,
 }
 
 pub struct Var {

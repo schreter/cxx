@@ -17,7 +17,7 @@ use syn::punctuated::Punctuated;
 use syn::{
     Abi, Attribute, Error, Expr, Fields, FnArg, ForeignItem, ForeignItemFn, ForeignItemType,
     GenericArgument, GenericParam, Generics, Ident, ItemEnum, ItemImpl, ItemStruct, Lit, LitStr,
-    Pat, PathArguments, Result, ReturnType, Signature as RustSignature, Token, TraitBound,
+    Pat, Path, PathArguments, Result, ReturnType, Signature as RustSignature, Token, TraitBound,
     TraitBoundModifier, Type as RustType, TypeArray, TypeBareFn, TypeParamBound, TypePath, TypePtr,
     TypeReference, Variant as RustVariant, Visibility,
 };
@@ -32,6 +32,7 @@ pub fn parse_items(
     items: Vec<Item>,
     trusted: bool,
     namespace: &Namespace,
+    error_mapper: Option<&Path>,
 ) -> Vec<Api> {
     let mut apis = Vec::new();
     for item in items {
@@ -42,7 +43,7 @@ pub fn parse_items(
             },
             Item::Enum(item) => apis.push(parse_enum(cx, item, namespace)),
             Item::ForeignMod(foreign_mod) => {
-                parse_foreign_mod(cx, foreign_mod, &mut apis, trusted, namespace)
+                parse_foreign_mod(cx, foreign_mod, &mut apis, trusted, namespace, error_mapper)
             }
             Item::Impl(item) => match parse_impl(cx, item) {
                 Ok(imp) => apis.push(imp),
@@ -338,6 +339,7 @@ fn parse_foreign_mod(
     out: &mut Vec<Api>,
     trusted: bool,
     namespace: &Namespace,
+    error_mapper: Option<&Path>,
 ) {
     let lang = match parse_lang(&foreign_mod.abi) {
         Ok(lang) => lang,
@@ -360,12 +362,14 @@ fn parse_foreign_mod(
 
     let mut cfg = CfgExpr::Unconditional;
     let mut namespace = namespace.clone();
+    let mut error_mapper = error_mapper.cloned();
     let attrs = attrs::parse(
         cx,
         foreign_mod.attrs,
         attrs::Parser {
             cfg: Some(&mut cfg),
             namespace: Some(&mut namespace),
+            error_mapper: Some(&mut error_mapper),
             ..Default::default()
         },
     );
@@ -378,7 +382,16 @@ fn parse_foreign_mod(
                 items.push(ety);
             }
             ForeignItem::Fn(foreign) => {
-                match parse_extern_fn(cx, foreign, lang, trusted, &cfg, &namespace, &attrs) {
+                match parse_extern_fn(
+                    cx,
+                    foreign,
+                    lang,
+                    trusted,
+                    &cfg,
+                    &namespace,
+                    error_mapper.as_ref(),
+                    &attrs,
+                ) {
                     Ok(efn) => items.push(efn),
                     Err(err) => cx.push(err),
                 }
@@ -525,6 +538,7 @@ fn parse_extern_fn(
     trusted: bool,
     extern_block_cfg: &CfgExpr,
     namespace: &Namespace,
+    error_mapper: Option<&Path>,
     attrs: &OtherAttrs,
 ) -> Result<Api> {
     let mut cfg = extern_block_cfg.clone();
@@ -532,6 +546,7 @@ fn parse_extern_fn(
     let mut namespace = namespace.clone();
     let mut cxx_name = None;
     let mut rust_name = None;
+    let mut error_mapper = error_mapper.cloned();
     let mut attrs = attrs.clone();
     attrs.extend(attrs::parse(
         cx,
@@ -542,6 +557,7 @@ fn parse_extern_fn(
             namespace: Some(&mut namespace),
             cxx_name: Some(&mut cxx_name),
             rust_name: Some(&mut rust_name),
+            error_mapper: Some(&mut error_mapper),
             ..Default::default()
         },
     ));
@@ -699,6 +715,7 @@ fn parse_extern_fn(
             throws,
             paren_token,
             throws_tokens,
+            error_mapper,
         },
         semi_token,
         trusted,
@@ -1421,6 +1438,7 @@ fn parse_type_fn(ty: &TypeBareFn) -> Result<Type> {
     let generics = Generics::default();
     let receiver = None;
     let paren_token = ty.paren_token;
+    let error_mapper = None;
 
     Ok(Type::Fn(Box::new(Signature {
         asyncness,
@@ -1433,6 +1451,7 @@ fn parse_type_fn(ty: &TypeBareFn) -> Result<Type> {
         throws,
         paren_token,
         throws_tokens,
+        error_mapper,
     })))
 }
 
